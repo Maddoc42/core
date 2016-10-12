@@ -359,6 +359,77 @@ class Manager extends PublicEmitter implements IUserManager {
 	}
 
 	/**
+	 * returns how many users have logged in once
+	 *
+	 * @return int
+	 * @since 9.2.0
+	 */
+	public function countSeenUsers() {
+		$queryBuilder = \OC::$server->getDatabaseConnection()->getQueryBuilder();
+		$queryBuilder->select($queryBuilder->createFunction('COUNT(`userid`)'))
+			->from('preferences')
+			->where($queryBuilder->expr()->eq(
+				'appid', $queryBuilder->createNamedParameter('login'))
+			)
+			->andWhere($queryBuilder->expr()->eq(
+				'configkey', $queryBuilder->createNamedParameter('lastLogin'))
+			)
+			// isNotNull has problems on oracle because configvaluo is a CLOB, so use LENGTH(`configvalue`) > 0 instead
+			->andWhere($queryBuilder->expr()->gt($queryBuilder->createFunction('LENGTH(`configvalue`)'), $queryBuilder->createFunction('0'))
+			);
+
+		$query = $queryBuilder->execute();
+
+		return (int)$query->fetchColumn();
+
+	}
+
+	/**
+	 * @param \Closure $callback
+	 * @param string $search
+	 * @since 9.0.0
+	 */
+	public function callForSeenUsers (\Closure $callback) {
+		foreach ($this->getSeenUserIds() as $userId) {
+			foreach ($this->backends as $backend) {
+				if ($backend->userExists($userId)) {
+					$user = $this->getUserObject($userId, $backend, false);
+					$return = $callback($user);
+					if ($return === false) {
+						return;
+					}
+				}
+			}
+		}
+
+	}
+
+	private function getSeenUserIds() {
+		$queryBuilder = \OC::$server->getDatabaseConnection()->getQueryBuilder();
+		$queryBuilder->select(['userid', 'configvalue'])
+			->from('preferences')
+			->where($queryBuilder->expr()->eq(
+				'appid', $queryBuilder->createNamedParameter('login'))
+			)
+			->andWhere($queryBuilder->expr()->eq(
+				'configkey', $queryBuilder->createNamedParameter('lastLogin'))
+			);
+			// we cannot do the timestamp comparison in SQL because oracle does
+			// not support a CLOB in the WHERE clause
+
+		$query = $queryBuilder->execute();
+		$result = [];
+
+		while ($row = $query->fetch()) {
+			// so we do the timestamp comparison here
+			if (!empty($row[configvalue])) {
+				$result[] = $row['userid'];
+			}
+		}
+
+		return $result;
+	}
+	/**
 	 * @param string $email
 	 * @return IUser[]
 	 * @since 9.1.0
